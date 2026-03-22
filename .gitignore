@@ -1,3 +1,8 @@
 raspi_key
 raspi_key.pub
 capturas/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
