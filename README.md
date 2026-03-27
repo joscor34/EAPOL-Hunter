@@ -1,4 +1,7 @@
-# WiFi Scanner + Handshake Extractor
+
+# EAPOL HUNTER
+
+![EAPOL HUNTER](assets/EAPOL_HUNTER.png)
 
 Herramienta para Raspberry Pi escrita en Python que pone una interfaz WiFi en **modo monitor**, escanea redes cercanas y captura **handshakes WPA/WPA2** (EAPOL 4-way y PMKID) guardándolos en formato **hc22000**, listo para procesar con hashcat.
 
