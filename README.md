@@ -3,7 +3,7 @@
 
 ![EAPOL HUNTER](assets/EAPOL_HUNTER.png)
 
-Herramienta para Raspberry Pi escrita en Python que pone una interfaz WiFi en **modo monitor**, escanea redes cercanas y captura **handshakes WPA/WPA2** (EAPOL 4-way y PMKID) guardándolos en formato **hc22000**, listo para procesar con hashcat.
+Herramienta escrita en Python que pone una interfaz WiFi en **modo monitor**, escanea redes cercanas y captura **handshakes WPA/WPA2** (EAPOL 4-way y PMKID) guardándolos en formato **hc22000**, listo para procesar con hashcat.
 
 > **Aviso legal:** Esta herramienta es solo para uso en redes propias o sobre las que se tenga **autorización explícita por escrito**. El uso no autorizado puede constituir un delito.
 
@@ -26,7 +26,7 @@ Herramienta para Raspberry Pi escrita en Python que pone una interfaz WiFi en **
 
 ### Hardware
 
-La Raspberry Pi 3 tiene WiFi integrado (`wlan0`), pero el chip Broadcom BCM43438 **no soporta modo monitor**. Se necesita un adaptador USB con uno de estos chipsets:
+El programa fue escrito para una Raspberry Pi 3, la cual tiene tiene WiFi integrado (`wlan0`), pero el chip Broadcom BCM43438 **no soporta modo monitor**. Se necesita un adaptador USB con uno de estos chipsets:
 
 | Chipset | Modo monitor | Inyección |
 |---|:---:|:---:|
